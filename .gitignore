@@ -1,0 +1,26 @@
+# Environments
+venv/
+.env
+.env.*
+
+# Dependencies
+node_modules/
+
+# Build outputs
+dist/
+build/
+bin/
+*.spec
+
+# Rust/Tauri specific
+target/
+ui/src-tauri/target/
+
+# OS specific
+.DS_Store
+Thumbs.db
+
+# Project specific
+*.temp.wav
+*.srt
+ui/src-tauri/binaries/engine-*
