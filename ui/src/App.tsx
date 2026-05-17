@@ -1,9 +1,9 @@
 import { useState, useEffect } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
-import { open } from "@tauri-apps/plugin-dialog";
+import { open, confirm } from "@tauri-apps/plugin-dialog";
 import { motion, AnimatePresence } from "framer-motion";
-import { FileVideo, CheckCircle2, AlertCircle, Loader2, Upload } from "lucide-react";
+import { FileVideo, CheckCircle2, AlertCircle, Loader2, Upload, ChevronDown } from "lucide-react";
 
 interface StatusUpdate {
   status: string;
@@ -11,23 +11,38 @@ interface StatusUpdate {
   message: string;
 }
 
+const WHISPER_MODELS = [
+  { id: "tiny", name: "Tiny (Fastest)", description: "Low accuracy, very fast" },
+  { id: "base", name: "Base (Balanced)", description: "Good accuracy, fast" },
+  { id: "small", name: "Small (Better)", description: "Better accuracy, slower" },
+  { id: "medium", name: "Medium (High)", description: "High accuracy, slow" },
+  { id: "large-v3", name: "Large v3 (Highest)", description: "Highest accuracy, very slow" },
+];
+
 export default function App() {
   const [videoPath, setVideoPath] = useState<string | null>(null);
+  const [selectedModel, setSelectedModel] = useState("base");
   const [processing, setProcessing] = useState(false);
   const [progress, setProgress] = useState(0);
   const [statusMessage, setStatusMessage] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [complete, setComplete] = useState(false);
+  const [successMsg, setSuccessMsg] = useState<string | null>(null);
 
   useEffect(() => {
     const unlisten = listen<string>("engine-status", (event) => {
       console.log("Raw engine event:", event);
       try {
-        // The sidecar output might contain extra whitespace/newlines
         const cleanPayload = event.payload.trim();
         if (!cleanPayload) return;
 
         const data: StatusUpdate = JSON.parse(cleanPayload);
+        
+        if (data.status === "model_loaded") {
+          setSuccessMsg(data.message);
+          setTimeout(() => setSuccessMsg(null), 5000);
+        }
+
         setProgress(data.progress);
         setStatusMessage(data.message);
         
@@ -68,14 +83,26 @@ export default function App() {
   const handleProcess = async () => {
     if (!videoPath) return;
 
-    setProcessing(true);
     setError(null);
     setComplete(false);
-    setProgress(0);
-    setStatusMessage("Initializing...");
+    setSuccessMsg(null);
 
     try {
-      await invoke("process_video", { videoPath });
+      // 1. Check if model is downloaded
+      const isDownloaded = await invoke<boolean>("check_model", { modelName: selectedModel });
+      
+      if (!isDownloaded) {
+        const confirmed = await confirm(
+          `The '${selectedModel}' model needs to be downloaded (this can be several hundred MBs). Do you want to proceed?`,
+          { title: "Download Required", kind: "info" }
+        );
+        if (!confirmed) return;
+      }
+
+      setProcessing(true);
+      setProgress(0);
+      setStatusMessage("Initializing...");
+      await invoke("process_video", { videoPath, modelName: selectedModel });
     } catch (e) {
       setError(String(e));
       setProcessing(false);
@@ -99,8 +126,21 @@ export default function App() {
             <motion.div 
               initial={{ opacity: 0, y: 10 }}
               animate={{ opacity: 1, y: 0 }}
-              className="w-full"
+              className="w-full space-y-4"
             >
+              <div className="relative group">
+                <select 
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="w-full p-4 bg-neutral-900/50 border border-neutral-700/50 rounded-2xl appearance-none cursor-pointer focus:outline-none focus:border-blue-500/50 transition-colors text-sm font-medium pr-12"
+                >
+                  {WHISPER_MODELS.map((m) => (
+                    <option key={m.id} value={m.id} className="bg-neutral-800">{m.name}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500 pointer-events-none group-focus-within:text-blue-400 transition-colors" />
+              </div>
+
               <button 
                 onClick={handleSelectFile}
                 className="w-full h-40 border-2 border-dashed border-neutral-700/50 rounded-2xl flex flex-col items-center justify-center gap-3 hover:border-blue-500/50 hover:bg-blue-500/5 transition-all duration-300 group"
@@ -124,6 +164,20 @@ export default function App() {
                 <FileVideo className="w-5 h-5 text-blue-400" />
                 <span className="text-sm truncate font-medium">{videoPath}</span>
               </div>
+              
+              <div className="relative group">
+                <select 
+                  value={selectedModel}
+                  onChange={(e) => setSelectedModel(e.target.value)}
+                  className="w-full p-4 bg-neutral-900/50 border border-neutral-700/50 rounded-2xl appearance-none cursor-pointer focus:outline-none focus:border-blue-500/50 transition-colors text-sm font-medium pr-12"
+                >
+                  {WHISPER_MODELS.map((m) => (
+                    <option key={m.id} value={m.id} className="bg-neutral-800">{m.name}</option>
+                  ))}
+                </select>
+                <ChevronDown className="absolute right-4 top-1/2 -translate-y-1/2 w-4 h-4 text-neutral-500 pointer-events-none" />
+              </div>
+
               <button
                 onClick={handleProcess}
                 className="w-full py-4 bg-blue-600 hover:bg-blue-500 active:scale-[0.98] text-white rounded-2xl font-medium transition-all shadow-lg shadow-blue-900/20"
@@ -162,6 +216,18 @@ export default function App() {
           )}
 
           <AnimatePresence>
+            {successMsg && (
+              <motion.div 
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0 }}
+                className="w-full p-3 bg-blue-500/10 border border-blue-500/20 rounded-xl flex items-center gap-3 text-blue-400 text-sm font-medium"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                {successMsg}
+              </motion.div>
+            )}
+
             {complete && (
               <motion.div 
                 initial={{ opacity: 0, scale: 0.9 }}
